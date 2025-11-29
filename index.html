@@ -107,14 +107,15 @@ const COGNITO_IDENTITY_POOL_ID = "us-east-2:d815e354-8912-4d75-8a24-43d9d31b4248
 let accessToken = null;
 
 function loginSpotify() {
-    const authUrl =
-        "https://accounts.spotify.com/authorize" +
-        "?client_id=" + SPOTIFY_CLIENT_ID +
-        "&response_type=token" +
-        "&redirect_uri=" + encodeURIComponent(REDIRECT_URI) +
-        "&scope=" + encodeURIComponent("playlist-read-private playlist-modify-private");
+    const params = new URLSearchParams({
+        client_id: SPOTIFY_CLIENT_ID,
+        response_type: "token",
+        redirect_uri: REDIRECT_URI,
+        scope: "playlist-read-private playlist-modify-private"
+    });
 
-    window.location.href = authUrl;
+    const url = "https://accounts.spotify.com/authorize?" + params.toString();
+    window.location.href = url;
 }
 
 window.onload = function () {
