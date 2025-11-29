@@ -59,8 +59,7 @@
     <h2>Login with Spotify</h2>
     <button onclick="loginSpotify()">Login</button>
     
-    <button onclick="showLoginURL()" style="background:#444;color:white;margin-top:10px;">
-    Show Login URL (Debug)
+ <button onclick="alert(buildSpotifyURL())">Show Login URL</button>
 </button>
 </div>
 
@@ -287,15 +286,15 @@ async function savePlaylistToS3() {
     });
 }
 
-function showLoginURL() {
-    const url =
-        "https://accounts.spotify.com/authorize" +
-        "?client_id=" + SPOTIFY_CLIENT_ID +
-        "&response_type=token" +
-        "&redirect_uri=" + encodeURIComponent(REDIRECT_URI) +
-        "&scope=" + encodeURIComponent("playlist-read-private playlist-modify-private");
+function buildSpotifyURL() {
+    const params = new URLSearchParams({
+        client_id: SPOTIFY_CLIENT_ID,
+        response_type: "token",
+        redirect_uri: REDIRECT_URI,
+        scope: "playlist-read-private playlist-modify-private"
+    });
 
-    alert(url);
+    return "https://accounts.spotify.com/authorize?" + params.toString();
 }
 
 </script>
