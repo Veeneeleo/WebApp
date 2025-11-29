@@ -306,8 +306,8 @@ async function savePlaylistToS3() {
         Bucket: S3_BUCKET,
         Key: "playlists/" + filename,
         Body: csv,
-        ContentType: "text/csv",
-        ACL: "public-read"
+        ContentType: "text/csv"
+
     };
 
     s3.putObject(params, (err, data) => {
