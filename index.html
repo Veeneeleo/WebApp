@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Veeneeleo Web</title>
+
+<!-- AWS SDK for Browser -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/aws-sdk/2.1488.0/aws-sdk.min.js"></script>
+
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background: #111;
+        color: white;
+        margin: 0;
+        padding: 20px;
+    }
+    h1, h2 { margin-bottom: 10px; }
+    .card {
+        background: #1b1b1b;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 20px;
+    }
+    input, button {
+        padding: 10px;
+        border-radius: 6px;
+        border: none;
+        margin: 5px 0;
+    }
+    input { width: 100%; }
+    button {
+        background: #1db954;
+        color: black;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    ul { list-style: none; padding: 0; }
+    li { padding: 10px 0; border-bottom: 1px solid #333; }
+    .track {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    img { width: 50px; height: 50px; border-radius: 6px; }
+    .action-row {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+    }
+</style>
+</head>
+<body>
+
+<h1>Veeneeleo Web</h1>
+
+<!-- LOGIN -->
+<div id="login-box" class="card">
+    <h2>Login with Spotify</h2>
+    <button onclick="loginSpotify()">Login</button>
+</div>
+
+<!-- MAIN APP -->
+<div id="app" style="display:none">
+
+    <!-- SEARCH -->
+    <div class="card">
+        <h2>Search Spotify</h2>
+        <input id="search" placeholder="Search songs..." oninput="searchTracks()">
+        <ul id="results"></ul>
+    </div>
+
+    <!-- PLAYLIST -->
+    <div class="card">
+        <h2>Current Playlist</h2>
+        <div>Total Duration: <span id="duration">0m 0s</span> / 15m max</div>
+        <ul id="playlist"></ul>
+
+        <div class="action-row">
+            <input id="title-input" placeholder="Playlist title">
+            <button onclick="savePlaylistToS3()">Upload to S3</button>
+        </div>
+
+        <button onclick="clearPlaylist()" style="margin-top:5px;background:#444;color:#fff;">Clear Playlist</button>
+    </div>
+
+</div>
+
+<script>
+/* ---------------------------------------------------
+   CONFIG VALUES — FILL THESE IN
+--------------------------------------------------- */
+
+const SPOTIFY_CLIENT_ID = "81cff1fc219b442abfb47d9a3bba8960";
+const REDIRECT_URI = window.location.origin + "/";
+const S3_BUCKET = "YOUR_S3_BUCKET";
+const COGNITO_IDENTITY_POOL_ID = "YOUR_IDENTITY_POOL_ID";
+
+/* ---------------------------------------------------
+   SPOTIFY LOGIN
+--------------------------------------------------- */
+
+let accessToken = null;
+
+function loginSpotify() {
+    const scopes = "playlist-read-private playlist-modify-private";
+
+    window.location.href =
+        "https://accounts.spotify.com/authorize" +
+        "?response_type=token" +
+        "&client_id=" + SPOTIFY_CLIENT_ID +
+        "&redirect_uri=" + encodeURIComponent(REDIRECT_URI) +
+        "&scope=" + encodeURIComponent(scopes);
+}
+
+window.onload = function () {
+    if (window.location.hash.includes("access_token")) {
+        const params = new URLSearchParams(window.location.hash.substring(1));
+        accessToken = params.get("access_token");
+
+        document.getElementById("login-box").style.display = "none";
+        document.getElementById("app").style.display = "block";
+
+        window.location.hash = ""; // clean URL
+    }
+};
+
+/* ---------------------------------------------------
+   SPOTIFY SEARCH
+--------------------------------------------------- */
+
+let searchTimeout;
+
+function searchTracks() {
+    const q = document.getElementById("search").value.trim();
+    if (!q) {
+        document.getElementById("results").innerHTML = "";
+        return;
+    }
+
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => fetchTracks(q), 300);
+}
+
+function fetchTracks(query) {
+    fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=5`, {
+        headers: { Authorization: "Bearer " + accessToken }
+    })
+    .then(res => res.json())
+    .then(data => {
+        const tracks = data.tracks.items;
+        document.getElementById("results").innerHTML = tracks.map(t => `
+            <li onclick='addTrack(${JSON.stringify(t).replace(/'/g, "&apos;")})'>
+                <div class="track">
+                    <img src="${t.album.images[0]?.url}">
+                    <div>
+                        <b>${t.name}</b><br>
+                        ${t.artists[0].name}
+                    </div>
+                </div>
+            </li>
+        `).join("");
+    });
+}
+
+/* ---------------------------------------------------
+   PLAYLIST BUILDER
+--------------------------------------------------- */
+
+let playlist = [];
+let totalDuration = 0;
+
+function addTrack(t) {
+    const durationSec = Math.floor(t.duration_ms / 1000);
+
+    if (totalDuration + durationSec > 900) {
+        alert("This exceeds the 15-minute playlist limit.");
+        return;
+    }
+
+    playlist.push({
+        title: t.name,
+        artist: t.artists[0].name,
+        albumName: t.album.name,
+        duration: durationSec,
+        spotifyURI: t.uri,
+        albumArtURL: t.album.images[0]?.url || ""
+    });
+
+    totalDuration += durationSec;
+    renderPlaylist();
+}
+
+function renderPlaylist() {
+    document.getElementById("duration").innerText =
+        `${Math.floor(totalDuration / 60)}m ${totalDuration % 60}s`;
+
+    document.getElementById("playlist").innerHTML =
+        playlist.map((t, i) => `
+            <li>
+                <div class="track">
+                    <img src="${t.albumArtURL}">
+                    <div>
+                        <b>${t.title}</b><br>
+                        ${t.artist}<br>
+                        ${t.albumName}<br>
+                        ${Math.floor(t.duration/60)}m ${t.duration%60}s
+                    </div>
+                </div>
+                <button onclick="removeTrack(${i})" style="background:#444;color:white;margin-top:5px">Remove</button>
+            </li>
+        `).join("");
+}
+
+function removeTrack(i) {
+    totalDuration -= playlist[i].duration;
+    playlist.splice(i, 1);
+    renderPlaylist();
+}
+
+function clearPlaylist() {
+    playlist = [];
+    totalDuration = 0;
+    renderPlaylist();
+}
+
+/* ---------------------------------------------------
+   CSV GENERATION
+--------------------------------------------------- */
+
+function buildCSV() {
+    let csv = "Order,Title,Artist,Album,Duration,SpotifyURI,AlbumArtURL\n";
+
+    playlist.forEach((t, i) => {
+        csv += `${i+1},"${t.title}","${t.artist}","${t.albumName}",${t.duration},"${t.spotifyURI}","${t.albumArtURL}"\n`;
+    });
+
+    return csv;
+}
+
+/* ---------------------------------------------------
+   AWS S3 UPLOAD (Cognito Unauthenticated)
+--------------------------------------------------- */
+
+// Configure AWS
+AWS.config.region = "us-east-2";
+
+AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+    IdentityPoolId: COGNITO_IDENTITY_POOL_ID
+});
+
+const s3 = new AWS.S3({ apiVersion: "2006-03-01" });
+
+// Upload
+async function savePlaylistToS3() {
+    const title = document.getElementById("title-input").value.trim() || "Untitled";
+    const csv = buildCSV();
+    const filename = title.replace(/\s+/g, "_") + "_" + Date.now() + ".csv";
+
+    // Ensure credentials are ready
+    await AWS.config.credentials.getPromise();
+
+    const params = {
+        Bucket: S3_BUCKET,
+        Key: "playlists/" + filename,
+        Body: csv,
+        ContentType: "text/csv",
+        ACL: "public-read"
+    };
+
+    s3.putObject(params, (err, data) => {
+        if (err) {
+            alert("Upload failed: " + err.message);
+            return;
+        }
+
+        const url = `https://${S3_BUCKET}.s3.amazonaws.com/playlists/${filename}`;
+        alert("Uploaded Successfully!\n\n" + url);
+
+        clearPlaylist();
+        document.getElementById("title-input").value = "";
+    });
+}
+
+</script>
+</body>
+</html>
